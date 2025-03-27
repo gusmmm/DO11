@@ -25,7 +25,8 @@ class DataPreprocessor:
         self.y = None  # Target
         self.removed_columns = {
             'special_prefix': [],
-            'high_missing': []
+            'high_missing': [],
+            'demographic': []  # New category for demographic-filtered columns
         }
         self.original_shape = None
     
@@ -142,6 +143,116 @@ class DataPreprocessor:
             print(f"{Fore.BLUE}ℹ No columns have >{threshold}% missing values.{Style.RESET_ALL}")
             
         return self.df
+    
+    def remove_demographic_columns(self, demographics=None):
+        """
+        Remove columns that contain specific demographic indicators.
+        
+        Parameters:
+        -----------
+        demographics : list
+            List of demographic indicators to filter out (e.g., ['Rural', 'Urban'])
+            If None, user will be asked to choose which demographics to filter
+            
+        Returns:
+        --------
+        pandas.DataFrame
+            The dataframe with demographic columns removed
+        """
+        if self.df is None:
+            raise ValueError("Data not loaded. Call load_data() first.")
+        
+        initial_column_count = len(self.df.columns)
+        
+        # If demographics not provided, ask user
+        if demographics is None:
+            demographics = self.ask_demographic_filters()
+        
+        if not demographics:
+            print(f"{Fore.BLUE}ℹ No demographic filters selected. Skipping demographic filtering.{Style.RESET_ALL}")
+            return self.df
+        
+        # Define case-insensitive patterns for each demographic
+        patterns = [f"(?i){demo}" for demo in demographics]
+        
+        # Identify columns that match any of the patterns
+        columns_to_remove = []
+        for pattern in patterns:
+            matched_cols = [col for col in self.df.columns if pattern.lower().replace("(?i)", "") in col.lower()]
+            columns_to_remove.extend(matched_cols)
+        
+        # Remove duplicates
+        columns_to_remove = list(set(columns_to_remove))
+        
+        if columns_to_remove:
+            print(f"{Fore.YELLOW}⚠ Removing {len(columns_to_remove)} columns containing demographic indicators: {', '.join(demographics)}{Style.RESET_ALL}")
+            
+            # Print list of columns being removed (with truncation if too many)
+            if len(columns_to_remove) <= 10:
+                for col in columns_to_remove:
+                    print(f"  - {col}")
+            else:
+                for col in columns_to_remove[:5]:
+                    print(f"  - {col}")
+                print(f"  - ... and {len(columns_to_remove) - 5} more columns")
+            
+            # Remove the columns
+            self.df = self.df.drop(columns=columns_to_remove)
+            
+            # Store removed columns
+            self.removed_columns['demographic'] = columns_to_remove
+            
+            print(f"{Fore.GREEN}✓ Columns removed. Original count: {initial_column_count}, New count: {len(self.df.columns)}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.BLUE}ℹ No columns match the selected demographic indicators.{Style.RESET_ALL}")
+            
+        return self.df
+    
+    def ask_demographic_filters(self):
+        """
+        Ask user which demographic indicators to filter out.
+        
+        Returns:
+        --------
+        list
+            List of selected demographic indicators
+        """
+        demographics = ['Rural', 'Urban', 'Male', 'Female']
+        selected = []
+        
+        print(f"\n{Fore.CYAN}Select demographic indicators to filter out (columns containing these terms will be removed):{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}[1]{Style.RESET_ALL} Rural")
+        print(f"{Fore.YELLOW}[2]{Style.RESET_ALL} Urban")
+        print(f"{Fore.YELLOW}[3]{Style.RESET_ALL} Male")
+        print(f"{Fore.YELLOW}[4]{Style.RESET_ALL} Female")
+        print(f"{Fore.YELLOW}[5]{Style.RESET_ALL} All of the above")
+        print(f"{Fore.YELLOW}[6]{Style.RESET_ALL} None (keep all demographic indicators)")
+        
+        while True:
+            try:
+                choice = input(f"\n{Fore.CYAN}Enter your choice (1-6 or comma-separated list e.g. 1,3,4): {Style.RESET_ALL}")
+                
+                if choice == '5':
+                    return demographics
+                elif choice == '6':
+                    return []
+                elif ',' in choice:
+                    # Handle comma-separated list
+                    indices = [int(idx.strip()) for idx in choice.split(',')]
+                    for idx in indices:
+                        if 1 <= idx <= 4:
+                            selected.append(demographics[idx-1])
+                        else:
+                            print(f"{Fore.RED}✗ Invalid choice: {idx}. Please enter numbers between 1 and 6.{Style.RESET_ALL}")
+                            continue
+                    return selected
+                elif choice in ['1', '2', '3', '4']:
+                    selected.append(demographics[int(choice)-1])
+                    return selected
+                else:
+                    print(f"{Fore.RED}✗ Invalid choice. Please enter a number between 1 and 6 or a comma-separated list.{Style.RESET_ALL}")
+            except ValueError:
+                print(f"{Fore.RED}✗ Please enter valid number(s).{Style.RESET_ALL}")
     
     def prepare_features(self):
         """
@@ -292,13 +403,25 @@ class DataPreprocessor:
                     print(f"  - {col}")
                 print(f"  - ... and {high_missing_count - 5} more columns")
         
+        # Demographic columns
+        demographic_count = len(self.removed_columns['demographic'])
+        print(f"\n3. Demographic indicator columns: {demographic_count}")
+        if demographic_count > 0:
+            if demographic_count <= 10:
+                for col in self.removed_columns['demographic']:
+                    print(f"  - {col}")
+            else:
+                for col in self.removed_columns['demographic'][:5]:
+                    print(f"  - {col}")
+                print(f"  - ... and {demographic_count - 5} more columns")
+        
         # Final datasets
         print(f"\n{Fore.WHITE}{Style.BRIGHT}Final Datasets:{Style.RESET_ALL}")
         print(f"Features (X): {self.X.shape[0]} rows, {self.X.shape[1]} columns")
         print(f"Target (y): {self.y.shape[0]} elements")
         
         # Total columns removed
-        total_removed = special_count + high_missing_count
+        total_removed = special_count + high_missing_count + demographic_count
         print(f"\n{Fore.WHITE}{Style.BRIGHT}Total columns removed:{Style.RESET_ALL} {total_removed}")
         print(f"Original columns: {self.original_shape[1]}")
         print(f"Final columns: {self.X.shape[1] + 1}") # +1 for target column
@@ -306,7 +429,7 @@ class DataPreprocessor:
         print(f"\n{Fore.GREEN}✓ Preprocessing completed successfully!{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}")
 
-    def preprocess(self, remove_high_missing=True, high_missing_threshold=75):
+    def preprocess(self, remove_high_missing=True, high_missing_threshold=75, filter_demographics=True):
         """
         Execute the full preprocessing pipeline.
         
@@ -316,6 +439,8 @@ class DataPreprocessor:
             Whether to remove columns with high missing values (default: True)
         high_missing_threshold : float
             The threshold percentage for removing high missing columns (default: 75%)
+        filter_demographics : bool
+            Whether to filter columns based on demographic indicators (default: True)
             
         Returns:
         --------
@@ -331,6 +456,9 @@ class DataPreprocessor:
         
         if remove_high_missing:
             self.remove_high_missing_columns(threshold=high_missing_threshold)
+        
+        if filter_demographics:
+            self.remove_demographic_columns()
         
         # Ask for missing values strategy
         strategy = self.ask_missing_values_strategy()    
